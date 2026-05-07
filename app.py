@@ -513,6 +513,9 @@ class DownloadFrame(ctk.CTkFrame):
         self._cancel_flag     = threading.Event()
         self._thumb_image     = None
         self._compact_layout  = None
+        self._resize_job      = None
+        self._pending_width   = 0
+        self._media_features  = {}
 
         self._build()
         self.bind("<Configure>", self._on_resize)
@@ -678,18 +681,19 @@ class DownloadFrame(ctk.CTkFrame):
         self._thumb_var    = ctk.BooleanVar(value=False)
         self._sponsor_var  = ctk.BooleanVar(value=False)
 
-        ctk.CTkCheckBox(self._right_opts, text="Full Playlist",
-                        variable=self._playlist_var, **chk_kw
-                        ).grid(row=1, column=0, padx=(0,20), pady=(6,0), sticky="w")
-        ctk.CTkCheckBox(self._right_opts, text="Subtitles",
-                        variable=self._subs_var, **chk_kw
-                        ).grid(row=1, column=1, pady=(6,0), sticky="w")
-        ctk.CTkCheckBox(self._right_opts, text="Embed Thumbnail",
-                        variable=self._thumb_var, **chk_kw
-                        ).grid(row=2, column=0, padx=(0,20), pady=(6,0), sticky="w")
-        ctk.CTkCheckBox(self._right_opts, text="SponsorBlock",
-                        variable=self._sponsor_var, **chk_kw
-                        ).grid(row=2, column=1, pady=(6,0), sticky="w")
+        self._playlist_check = ctk.CTkCheckBox(self._right_opts, text="Full Playlist",
+                                               variable=self._playlist_var, **chk_kw)
+        self._playlist_check.grid(row=1, column=0, padx=(0,20), pady=(6,0), sticky="w")
+        self._subs_check = ctk.CTkCheckBox(self._right_opts, text="Subtitles",
+                                           variable=self._subs_var, **chk_kw)
+        self._subs_check.grid(row=1, column=1, pady=(6,0), sticky="w")
+        self._thumb_check = ctk.CTkCheckBox(self._right_opts, text="Embed Thumbnail",
+                                            variable=self._thumb_var, **chk_kw)
+        self._thumb_check.grid(row=2, column=0, padx=(0,20), pady=(6,0), sticky="w")
+        self._sponsor_check = ctk.CTkCheckBox(self._right_opts, text="SponsorBlock",
+                                              variable=self._sponsor_var, **chk_kw)
+        self._sponsor_check.grid(row=2, column=1, pady=(6,0), sticky="w")
+        self._set_feature_options({})
 
         # ── Progress card ────────────────────────────────────────────────────
         prog_card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=10)
@@ -776,7 +780,14 @@ class DownloadFrame(ctk.CTkFrame):
     def _on_resize(self, event):
         if event.widget is not self:
             return
-        width = max(event.width, 1)
+        self._pending_width = max(event.width, 1)
+        if self._resize_job is not None:
+            self.after_cancel(self._resize_job)
+        self._resize_job = self.after(90, self._flush_resize)
+
+    def _flush_resize(self):
+        self._resize_job = None
+        width = self._pending_width or self.winfo_width()
         compact = width < 860
         if compact != self._compact_layout:
             self._apply_layout(compact)
@@ -841,6 +852,45 @@ class DownloadFrame(ctk.CTkFrame):
         self._log.delete("1.0", "end")
         self._log.configure(state="disabled")
 
+    def _set_feature_options(self, features):
+        self._media_features = features
+
+        option_map = [
+            ("playlist", self._playlist_check, self._playlist_var),
+            ("subtitles", self._subs_check, self._subs_var),
+            ("thumbnail", self._thumb_check, self._thumb_var),
+            ("sponsorblock", self._sponsor_check, self._sponsor_var),
+        ]
+        for key, checkbox, variable in option_map:
+            enabled = bool(features.get(key))
+            checkbox.configure(state="normal" if enabled else "disabled")
+            if not enabled:
+                variable.set(False)
+
+        if features.get("playlist"):
+            self._playlist_var.set(True)
+        if features.get("thumbnail"):
+            self._thumb_var.set(True)
+
+    @staticmethod
+    def _analyze_features(info):
+        info_type = info.get("_type") or ""
+        entries = info.get("entries")
+        extractor = (info.get("extractor_key") or info.get("extractor") or "").lower()
+        webpage_url = (info.get("webpage_url") or info.get("original_url") or "").lower()
+
+        is_playlist = info_type in {"playlist", "multi_video"} or entries is not None
+        has_subtitles = bool(info.get("subtitles") or info.get("automatic_captions"))
+        has_thumbnail = bool(DownloadFrame._extract_thumbnail_url(info))
+        sponsorblock = "youtube" in extractor or "youtu.be" in webpage_url or "youtube.com" in webpage_url
+
+        return {
+            "playlist": is_playlist,
+            "subtitles": has_subtitles,
+            "thumbnail": has_thumbnail,
+            "sponsorblock": sponsorblock,
+        }
+
     # ── Fetch Info ────────────────────────────────────────────────────────────
     def _fetch_info(self):
         url = self._url_var.get().strip()
@@ -848,6 +898,7 @@ class DownloadFrame(ctk.CTkFrame):
             messagebox.showwarning("No URL", "Please paste a media URL first.")
             return
         self._reset_thumbnail()
+        self._set_feature_options({})
         self._info_title.configure(text="Analysing media link...")
         self._info_meta.configure(text="")
         self._fetch_btn.configure(state="disabled", text="Analysing…")
@@ -879,8 +930,9 @@ class DownloadFrame(ctk.CTkFrame):
                     "No downloadable video formats were found for this URL.")
             views_s  = f"{views:,} views" if views else ""
             thumb_url = self._extract_thumbnail_url(info)
+            features = self._analyze_features(info)
             self.after(0, lambda: self._update_info(
-                title, uploader, duration, views_s, n_fmt, extractor, webpage_url, thumb_url))
+                title, uploader, duration, views_s, n_fmt, extractor, webpage_url, thumb_url, features))
             self.after(0, lambda: self._log_write(
                 f'OK  "{title}"  |  {duration}  |  {n_fmt} formats'))
         except Exception as e:
@@ -890,7 +942,7 @@ class DownloadFrame(ctk.CTkFrame):
             self.after(0, lambda: self._fetch_btn.configure(
                 state="normal", text="  Analyse  "))
 
-    def _update_info(self, title, uploader, duration, views, n_fmt, extractor="", webpage_url="", thumb_url=""):
+    def _update_info(self, title, uploader, duration, views, n_fmt, extractor="", webpage_url="", thumb_url="", features=None):
         self._info_title.configure(text=title)
         parts = []
         if extractor: parts.append(extractor)
@@ -899,6 +951,7 @@ class DownloadFrame(ctk.CTkFrame):
         if views:     parts.append(f"👁 {views}")
         if n_fmt:     parts.append(f"🎬 {n_fmt} formats")
         self._info_meta.configure(text="   ·   ".join(parts))
+        self._set_feature_options(features or {})
         if thumb_url:
             self._load_thumbnail(thumb_url, webpage_url)
 
@@ -931,18 +984,37 @@ class DownloadFrame(ctk.CTkFrame):
 
     def _thumbnail_worker(self, thumb_url, referer):
         try:
-            headers = {"User-Agent": "Mozilla/5.0"}
-            if referer:
-                headers["Referer"] = referer
-            req = urllib.request.Request(thumb_url, headers=headers)
-            with urllib.request.urlopen(req, timeout=12) as response:
-                raw = response.read(3 * 1024 * 1024)
+            raw = self._download_thumbnail_bytes(thumb_url, referer)
             img = Image.open(io.BytesIO(raw)).convert("RGB")
             resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
             img = ImageOps.fit(img, THUMBNAIL_SIZE, method=resample)
             self.after(0, lambda image=img: self._set_thumbnail(image))
         except Exception as e:
             self.after(0, lambda m=str(e): self._log_write(f"Thumbnail unavailable: {m}"))
+
+    def _download_thumbnail_bytes(self, thumb_url, referer):
+        opts = apply_auth_opts({
+            "quiet": True,
+            "no_warnings": True,
+        }, self.app.cfg)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        if referer:
+            headers["Referer"] = referer
+
+        last_error = None
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                response = ydl.urlopen(urllib.request.Request(thumb_url, headers=headers))
+                return response.read(3 * 1024 * 1024)
+        except Exception as e:
+            last_error = e
+
+        try:
+            req = urllib.request.Request(thumb_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=12) as response:
+                return response.read(3 * 1024 * 1024)
+        except Exception:
+            raise last_error
 
     def _set_thumbnail(self, image):
         self._thumb_image = ctk.CTkImage(light_image=image, dark_image=image, size=THUMBNAIL_SIZE)
