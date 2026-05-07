@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+# Build outputs
+build/
+dist/
+*.spec~
+*.toc
+*.pkg
+*.pyz
+*.manifest
+*.exe
+
+# PyInstaller logs and temporary files
+warn-*.txt
+xref-*.html
+
+# Local app state
+.ytflow2_config.json
+.ytflow2_history.json
+config.json
+history.json
+cookies.txt
+*.cookies.txt
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log

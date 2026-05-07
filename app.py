@@ -1,6 +1,6 @@
 """
-YTFlow Pro — YouTube Downloader
-Inspired by 4K Downloader's clean, professional design.
+MediaFlow Pro - desktop media downloader.
+
 Built with CustomTkinter + yt-dlp.
 """
 
@@ -28,8 +28,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Constants & Defaults
 # ═══════════════════════════════════════════════════════════════════════════════
-APP_NAME     = "YTFlow Pro"
-VERSION      = "2.0"
+APP_NAME     = "MediaFlow Pro"
+VERSION      = "2.1"
 CONFIG_FILE  = Path.home() / ".ytflow2_config.json"
 HISTORY_FILE = Path.home() / ".ytflow2_history.json"
 
@@ -39,7 +39,15 @@ DEFAULT_CONFIG = {
     "max_history": 100,
     "ffmpeg_path": "",
     "concurrent":  "1",
+    "cookie_file": "",
+    "browser_cookies": "None",
 }
+
+SUPPORTED_SOURCE_HINTS = [
+    "YouTube", "Facebook", "Instagram", "TikTok", "X/Twitter",
+    "Vimeo", "SoundCloud", "Google Drive", "Twitch", "Reddit",
+]
+BROWSER_COOKIE_SOURCES = ["None", "Chrome", "Edge", "Firefox", "Brave", "Opera", "Vivaldi", "Chromium"]
 
 VIDEO_FORMATS   = ["mp4", "mkv", "webm", "avi", "mov", "flv"]
 AUDIO_FORMATS   = ["mp3", "m4a", "aac", "opus", "flac", "wav", "ogg"]
@@ -71,7 +79,7 @@ WARN     = "#F59E0B"
 def load_config():
     try:
         if CONFIG_FILE.exists():
-            with open(CONFIG_FILE) as f:
+            with open(CONFIG_FILE, encoding="utf-8") as f:
                 return {**DEFAULT_CONFIG, **json.load(f)}
     except Exception:
         pass
@@ -79,7 +87,7 @@ def load_config():
 
 def save_config(cfg):
     try:
-        with open(CONFIG_FILE, "w") as f:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
     except Exception:
         pass
@@ -87,7 +95,7 @@ def save_config(cfg):
 def load_history():
     try:
         if HISTORY_FILE.exists():
-            with open(HISTORY_FILE) as f:
+            with open(HISTORY_FILE, encoding="utf-8") as f:
                 return json.load(f)
     except Exception:
         pass
@@ -95,7 +103,7 @@ def load_history():
 
 def save_history(h):
     try:
-        with open(HISTORY_FILE, "w") as f:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(h, f, indent=2)
     except Exception:
         pass
@@ -104,6 +112,18 @@ def save_history(h):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  yt-dlp helpers
 # ═══════════════════════════════════════════════════════════════════════════════
+def apply_auth_opts(opts, cfg):
+    cookie_file = str(cfg.get("cookie_file", "")).strip()
+    if cookie_file:
+        opts["cookiefile"] = cookie_file
+
+    browser = str(cfg.get("browser_cookies", "None")).strip()
+    if browser and browser.lower() != "none":
+        opts["cookiesfrombrowser"] = (browser.lower(),)
+
+    return opts
+
+
 def fmt_duration(secs):
     if not secs:
         return ""
@@ -124,7 +144,11 @@ def fmt_size(b):
 def build_ydl_opts(cfg, out_dir, ext, quality, is_audio, progress_hook,
                    subs=False, embed_thumb=False, sponsor_block=False,
                    playlist=False):
-    outtmpl = os.path.join(out_dir, "%(title)s.%(ext)s")
+    os.makedirs(out_dir, exist_ok=True)
+    if playlist:
+        outtmpl = os.path.join(out_dir, "%(playlist_title)s", "%(playlist_index)03d - %(title)s.%(ext)s")
+    else:
+        outtmpl = os.path.join(out_dir, "%(title)s.%(ext)s")
     postprocessors = []
 
     if is_audio:
@@ -190,23 +214,26 @@ def build_ydl_opts(cfg, out_dir, ext, quality, is_audio, progress_hook,
         "subtitleslangs":  ["en"] if subs else [],
         "writethumbnail":  embed_thumb,
         "concurrent_fragment_downloads": conc,
+        "retries":         5,
+        "fragment_retries": 5,
+        "windowsfilenames": True,
     }
     ffmpeg = cfg.get("ffmpeg_path", "").strip()
     if ffmpeg:
         opts["ffmpeg_location"] = ffmpeg
-    return opts
+    return apply_auth_opts(opts, cfg)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Main Application Window
 # ═══════════════════════════════════════════════════════════════════════════════
-class YTFlowApp(ctk.CTk):
+class MediaFlowApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.cfg     = load_config()
         self.history = load_history()
 
-        ctk.set_appearance_mode("dark")
+        ctk.set_appearance_mode(self.cfg.get("theme", "dark"))
         ctk.set_default_color_theme("blue")
         self.configure(fg_color=BG_ROOT)
 
@@ -237,10 +264,10 @@ class YTFlowApp(ctk.CTk):
                      fg_color=ACCENT, corner_radius=2).grid(row=0, column=0, padx=(0,10))
         lbl_f = ctk.CTkFrame(logo_f, fg_color="transparent")
         lbl_f.grid(row=0, column=1, sticky="w")
-        ctk.CTkLabel(lbl_f, text="YTFlow",
+        ctk.CTkLabel(lbl_f, text="MediaFlow",
                      font=ctk.CTkFont("Segoe UI", 20, weight="bold"),
                      text_color=TXT_PRI).grid(row=0, sticky="w")
-        ctk.CTkLabel(lbl_f, text="Pro Downloader",
+        ctk.CTkLabel(lbl_f, text="Universal Downloader",
                      font=ctk.CTkFont("Segoe UI", 10),
                      text_color=TXT_SEC).grid(row=1, sticky="w")
 
@@ -341,7 +368,7 @@ class YTFlowApp(ctk.CTk):
 class DownloadFrame(ctk.CTkFrame):
     NAME = "Download"
 
-    def __init__(self, parent, app: YTFlowApp):
+    def __init__(self, parent, app: MediaFlowApp):
         super().__init__(parent, fg_color=BG_ROOT, corner_radius=0)
         self.app = app
 
@@ -364,7 +391,7 @@ class DownloadFrame(ctk.CTkFrame):
                      font=ctk.CTkFont("Segoe UI", 16, weight="bold"),
                      text_color=TXT_PRI
                      ).grid(row=0, column=0, padx=24, pady=(10,2), sticky="w")
-        ctk.CTkLabel(topbar, text="Paste any YouTube link and configure your download below",
+        ctk.CTkLabel(topbar, text="Paste a supported media link and configure your download below",
                      font=ctk.CTkFont("Segoe UI", 11), text_color=TXT_SEC
                      ).grid(row=1, column=0, padx=24, pady=(0,10), sticky="w")
 
@@ -373,7 +400,7 @@ class DownloadFrame(ctk.CTkFrame):
         url_card.grid(row=1, column=0, sticky="ew", padx=24, pady=(16, 6))
         url_card.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(url_card, text="VIDEO / PLAYLIST URL",
+        ctk.CTkLabel(url_card, text="MEDIA / PLAYLIST URL",
                      font=ctk.CTkFont("Segoe UI", 9, weight="bold"),
                      text_color=TXT_DIM
                      ).grid(row=0, column=0, padx=14, pady=(12,4), sticky="w")
@@ -385,7 +412,7 @@ class DownloadFrame(ctk.CTkFrame):
         self._url_var = ctk.StringVar()
         self._url_entry = ctk.CTkEntry(
             url_row, textvariable=self._url_var,
-            placeholder_text="https://www.youtube.com/watch?v=...",
+            placeholder_text="Paste YouTube, Facebook, Instagram, Google Drive, Vimeo, SoundCloud...",
             height=42, font=ctk.CTkFont("Segoe UI", 12),
             fg_color=BG_INPUT, border_color=BORDER,
             text_color=TXT_PRI, placeholder_text_color=TXT_DIM,
@@ -408,6 +435,15 @@ class DownloadFrame(ctk.CTkFrame):
             command=self._fetch_info)
         self._fetch_btn.grid(row=0, column=2)
 
+        ctk.CTkLabel(
+            url_card,
+            text="Supported by yt-dlp: " + ", ".join(SUPPORTED_SOURCE_HINTS) + ", and many more",
+            font=ctk.CTkFont("Segoe UI", 10),
+            text_color=TXT_DIM,
+            wraplength=760,
+            justify="left",
+        ).grid(row=2, column=0, padx=14, pady=(0,12), sticky="w")
+
         # ── Info card ────────────────────────────────────────────────────────
         info_card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=10)
         info_card.grid(row=2, column=0, sticky="ew", padx=24, pady=6)
@@ -421,7 +457,7 @@ class DownloadFrame(ctk.CTkFrame):
                      text_color=TXT_DIM).place(relx=.5, rely=.5, anchor="center")
 
         self._info_title = ctk.CTkLabel(
-            info_card, text="Paste a link and click Analyse to load video info",
+            info_card, text="Paste a link and click Analyse to load media info",
             font=ctk.CTkFont("Segoe UI", 13, weight="bold"),
             text_color=TXT_PRI, wraplength=640, justify="left", anchor="w")
         self._info_title.grid(row=0, column=1, sticky="w", padx=8, pady=(12,2))
@@ -626,15 +662,21 @@ class DownloadFrame(ctk.CTkFrame):
     def _fetch_info(self):
         url = self._url_var.get().strip()
         if not url:
-            messagebox.showwarning("No URL", "Please paste a YouTube URL first.")
+            messagebox.showwarning("No URL", "Please paste a media URL first.")
             return
         self._fetch_btn.configure(state="disabled", text="Analysing…")
         self._log_write(f"Fetching info: {url}")
-        threading.Thread(target=self._fetch_worker, args=(url,), daemon=True).start()
+        playlist = self._playlist_var.get()
+        threading.Thread(target=self._fetch_worker, args=(url, playlist), daemon=True).start()
 
-    def _fetch_worker(self, url):
+    def _fetch_worker(self, url, playlist):
         try:
-            opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+            opts = apply_auth_opts({
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "noplaylist": not playlist,
+            }, self.app.cfg)
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
             title    = info.get("title", "Unknown")
@@ -666,7 +708,7 @@ class DownloadFrame(ctk.CTkFrame):
     def _start_download(self):
         url = self._url_var.get().strip()
         if not url:
-            messagebox.showwarning("No URL", "Please paste a YouTube URL first.")
+            messagebox.showwarning("No URL", "Please paste a media URL first.")
             return
         # Safe check — _download_thread always exists (set in __init__)
         if self._download_thread is not None and self._download_thread.is_alive():
@@ -685,18 +727,24 @@ class DownloadFrame(ctk.CTkFrame):
         quality  = self._qual_var.get()
         is_audio = self._type_var.get() == "Audio"
         out_dir  = self.app.cfg["output_dir"]
+        options = {
+            "subs": self._subs_var.get(),
+            "embed_thumb": self._thumb_var.get(),
+            "sponsor_block": self._sponsor_var.get(),
+            "playlist": self._playlist_var.get(),
+        }
 
         self._log_write(
             f"Starting  [{self._type_var.get()}]  [{quality}]  [.{ext}]  "
-            f"{'playlist' if self._playlist_var.get() else 'single'}")
+            f"{'playlist' if options['playlist'] else 'single'}")
 
         self._download_thread = threading.Thread(
             target=self._dl_worker,
-            args=(url, out_dir, ext, quality, is_audio),
+            args=(url, out_dir, ext, quality, is_audio, options),
             daemon=True)
         self._download_thread.start()
 
-    def _dl_worker(self, url, out_dir, ext, quality, is_audio):
+    def _dl_worker(self, url, out_dir, ext, quality, is_audio, options):
         t0 = time.time()
 
         def hook(d):
@@ -723,10 +771,10 @@ class DownloadFrame(ctk.CTkFrame):
         try:
             opts = build_ydl_opts(
                 self.app.cfg, out_dir, ext, quality, is_audio, hook,
-                subs=self._subs_var.get(),
-                embed_thumb=self._thumb_var.get(),
-                sponsor_block=self._sponsor_var.get(),
-                playlist=self._playlist_var.get())
+                subs=options["subs"],
+                embed_thumb=options["embed_thumb"],
+                sponsor_block=options["sponsor_block"],
+                playlist=options["playlist"])
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info  = ydl.extract_info(url)
                 title = (info.get("title") or url) if info else url
@@ -770,6 +818,7 @@ class DownloadFrame(ctk.CTkFrame):
             "• Install ffmpeg and ensure it is in your PATH\n"
             "• Check your internet connection\n"
             "• The URL may be private or geo-restricted\n"
+            "• For Instagram, Facebook, Google Drive, or age-restricted media, add cookies in Settings\n"
             "• Try a lower quality or different format")
 
     def _on_cancelled(self):
@@ -804,7 +853,7 @@ class DownloadFrame(ctk.CTkFrame):
 class HistoryFrame(ctk.CTkFrame):
     NAME = "History"
 
-    def __init__(self, parent, app: YTFlowApp):
+    def __init__(self, parent, app: MediaFlowApp):
         super().__init__(parent, fg_color=BG_ROOT, corner_radius=0)
         self.app = app
         self._all = []
@@ -939,7 +988,7 @@ class HistoryFrame(ctk.CTkFrame):
 class SettingsFrame(ctk.CTkFrame):
     NAME = "Settings"
 
-    def __init__(self, parent, app: YTFlowApp):
+    def __init__(self, parent, app: MediaFlowApp):
         super().__init__(parent, fg_color=BG_ROOT, corner_radius=0)
         self.app = app
         self._build()
@@ -1026,6 +1075,25 @@ class SettingsFrame(ctk.CTkFrame):
                          placeholder_text="e.g. C:\\ffmpeg\\bin",
                          placeholder_text_color=TXT_DIM, **entry_kw))
 
+        lbl("Cookie File  (optional)")
+        cookie_f = ctk.CTkFrame(body, fg_color="transparent")
+        cookie_f.grid(row=r[0], column=1, sticky="e", padx=4, pady=8)
+        self._cookie_var = ctk.StringVar(value=self.app.cfg.get("cookie_file",""))
+        ctk.CTkEntry(cookie_f, textvariable=self._cookie_var, width=300,
+                     placeholder_text="cookies.txt for login-required sites",
+                     placeholder_text_color=TXT_DIM, **entry_kw).grid(row=0, column=0)
+        ctk.CTkButton(cookie_f, text="Browse", width=72, height=32,
+                      fg_color=BG_CARD, hover_color=BORDER,
+                      text_color=TXT_SEC, corner_radius=6,
+                      command=self._browse_cookie).grid(row=0, column=1, padx=(6,0))
+        r[0] += 1
+
+        lbl("Use Browser Cookies")
+        self._browser_cookie_var = ctk.StringVar(
+            value=self.app.cfg.get("browser_cookies","None"))
+        wgt(ctk.CTkOptionMenu(body, variable=self._browser_cookie_var,
+                              values=BROWSER_COOKIE_SOURCES, width=130, **menu_kw))
+
         # APPEARANCE
         sec("APPEARANCE")
         lbl("Theme")
@@ -1046,7 +1114,7 @@ class SettingsFrame(ctk.CTkFrame):
                      font=ctk.CTkFont("Segoe UI", 11), text_color=TXT_SEC
                      ).grid(padx=14, pady=(0,4), sticky="w")
         ctk.CTkLabel(about,
-                     text="⚠  ffmpeg must be installed and in PATH for video/audio processing.",
+                     text="⚠  ffmpeg is required for merging video/audio and converting formats.",
                      font=ctk.CTkFont("Segoe UI", 10), text_color=WARN
                      ).grid(padx=14, pady=(0,12), sticky="w")
         r[0] += 1
@@ -1064,11 +1132,21 @@ class SettingsFrame(ctk.CTkFrame):
         if d:
             self._dir_var.set(d)
 
+    def _browse_cookie(self):
+        f = filedialog.askopenfilename(
+            title="Select cookies.txt",
+            filetypes=[("Cookie files", "*.txt"), ("All files", "*.*")],
+        )
+        if f:
+            self._cookie_var.set(f)
+
     def _save(self):
         self.app.cfg["output_dir"]  = self._dir_var.get()
         self.app.cfg["ffmpeg_path"] = self._ffmpeg_var.get()
         self.app.cfg["theme"]       = self._theme_var.get()
         self.app.cfg["concurrent"]  = self._conc_var.get()
+        self.app.cfg["cookie_file"] = self._cookie_var.get()
+        self.app.cfg["browser_cookies"] = self._browser_cookie_var.get()
         try:
             self.app.cfg["max_history"] = int(self._hist_var.get())
         except ValueError:
@@ -1076,11 +1154,11 @@ class SettingsFrame(ctk.CTkFrame):
         save_config(self.app.cfg)
         ctk.set_appearance_mode(self.app.cfg["theme"])
         self.app._dir_lbl.configure(
-            text=YTFlowApp._short(self.app.cfg["output_dir"]))
+            text=MediaFlowApp._short(self.app.cfg["output_dir"]))
         messagebox.showinfo("Saved", "Settings saved!\nTheme changes fully apply on next launch.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    app = YTFlowApp()
+    app = MediaFlowApp()
     app.mainloop()
