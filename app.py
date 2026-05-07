@@ -14,6 +14,7 @@ import time
 import re
 import io
 import urllib.request
+import ctypes
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -38,9 +39,12 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════════════════════
 APP_NAME     = "MediaFlow Pro"
 VERSION      = "2.1"
+APP_DIR      = Path(__file__).resolve().parent
 CONFIG_FILE  = Path.home() / ".ytflow2_config.json"
 HISTORY_FILE = Path.home() / ".ytflow2_history.json"
 THUMBNAIL_SIZE = (128, 72)
+ICON_FILE = "mediaflow.ico"
+ICON_PNG_FILE = "mediaflow.png"
 
 DEFAULT_CONFIG = {
     "theme":       "dark",
@@ -116,6 +120,11 @@ def save_history(h):
             json.dump(h, f, indent=2)
     except Exception:
         pass
+
+
+def resource_path(*parts):
+    base = Path(getattr(sys, "_MEIPASS", APP_DIR))
+    return base.joinpath(*parts)
 
 
 def clean_error_text(msg):
@@ -359,10 +368,26 @@ class MediaFlowApp(ctk.CTk):
         self.configure(fg_color=BG_ROOT)
 
         self.title(f"{APP_NAME}  ·  v{VERSION}")
+        self._apply_app_icon()
         self._set_initial_geometry()
 
         self._build_ui()
         self._nav("Download")
+
+    def _apply_app_icon(self):
+        try:
+            if sys.platform == "win32":
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                    "MediaFlow.Pro.Desktop")
+        except Exception:
+            pass
+
+        icon_path = resource_path("assets", ICON_FILE)
+        if icon_path.exists():
+            try:
+                self.iconbitmap(str(icon_path))
+            except Exception:
+                pass
 
     def _set_initial_geometry(self):
         screen_w = self.winfo_screenwidth()
@@ -392,12 +417,25 @@ class MediaFlowApp(ctk.CTk):
         sb.grid(row=0, column=0, sticky="nsew")
         sb.grid_propagate(False)
         sb.grid_rowconfigure(10, weight=1)
+        self._sidebar_icon = None
 
         # Logo
         logo_f = ctk.CTkFrame(sb, fg_color="transparent")
         logo_f.grid(row=0, column=0, padx=20, pady=(28, 24), sticky="ew")
-        ctk.CTkFrame(logo_f, width=4, height=36,
-                     fg_color=ACCENT, corner_radius=2).grid(row=0, column=0, padx=(0,10))
+        icon_path = resource_path("assets", ICON_PNG_FILE)
+        if Image is not None and icon_path.exists():
+            try:
+                icon_img = Image.open(icon_path)
+                self._sidebar_icon = ctk.CTkImage(
+                    light_image=icon_img, dark_image=icon_img, size=(38, 38))
+                ctk.CTkLabel(logo_f, image=self._sidebar_icon, text="").grid(
+                    row=0, column=0, padx=(0,10))
+            except Exception:
+                ctk.CTkFrame(logo_f, width=4, height=36,
+                             fg_color=ACCENT, corner_radius=2).grid(row=0, column=0, padx=(0,10))
+        else:
+            ctk.CTkFrame(logo_f, width=4, height=36,
+                         fg_color=ACCENT, corner_radius=2).grid(row=0, column=0, padx=(0,10))
         lbl_f = ctk.CTkFrame(logo_f, fg_color="transparent")
         lbl_f.grid(row=0, column=1, sticky="w")
         ctk.CTkLabel(lbl_f, text="MediaFlow",
@@ -485,7 +523,10 @@ class MediaFlowApp(ctk.CTk):
         if d:
             self.cfg["output_dir"] = d
             save_config(self.cfg)
-            self._dir_lbl.configure(text=self._short(d))
+            self.apply_runtime_settings()
+            settings_frame = getattr(self, "_frames", {}).get("Settings")
+            if settings_frame is not None and hasattr(settings_frame, "_dir_var"):
+                settings_frame._dir_var.set(d)
 
     @staticmethod
     def _short(p, n=24):
@@ -496,6 +537,18 @@ class MediaFlowApp(ctk.CTk):
         self.history.insert(0, entry)
         self.history = self.history[:self.cfg.get("max_history", 100)]
         save_history(self.history)
+        history_frame = getattr(self, "_frames", {}).get("History")
+        if history_frame is not None:
+            history_frame.refresh(self.history)
+
+    def apply_runtime_settings(self):
+        ctk.set_appearance_mode(self.cfg.get("theme", "dark"))
+        self._dir_lbl.configure(text=self._short(self.cfg["output_dir"]))
+        self.history = self.history[:self.cfg.get("max_history", 100)]
+        save_history(self.history)
+        history_frame = getattr(self, "_frames", {}).get("History")
+        if history_frame is not None:
+            history_frame.refresh(self.history)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -512,17 +565,13 @@ class DownloadFrame(ctk.CTkFrame):
         self._download_thread = None   # <-- BUG FIX
         self._cancel_flag     = threading.Event()
         self._thumb_image     = None
-        self._compact_layout  = None
-        self._resize_job      = None
-        self._pending_width   = 0
         self._media_features  = {}
 
         self._build()
-        self.bind("<Configure>", self._on_resize)
 
     def _build(self):
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(7, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
         # ── Top bar ──────────────────────────────────────────────────────────
         topbar = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0, height=60)
@@ -537,9 +586,18 @@ class DownloadFrame(ctk.CTkFrame):
                      font=ctk.CTkFont("Segoe UI", 11), text_color=TXT_SEC
                      ).grid(row=1, column=0, padx=24, pady=(0,10), sticky="w")
 
+        self._body = ctk.CTkScrollableFrame(
+            self,
+            fg_color="transparent",
+            scrollbar_button_color=BG_CARD,
+            scrollbar_button_hover_color=BORDER,
+        )
+        self._body.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
+        self._body.grid_columnconfigure(0, weight=1)
+
         # ── URL input card ───────────────────────────────────────────────────
-        url_card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=10)
-        url_card.grid(row=1, column=0, sticky="ew", padx=24, pady=(16, 6))
+        url_card = ctk.CTkFrame(self._body, fg_color=BG_CARD, corner_radius=8)
+        url_card.grid(row=0, column=0, sticky="ew", padx=24, pady=(16, 6))
         url_card.grid_columnconfigure(0, weight=1)
         self._source_hint = None
 
@@ -589,8 +647,8 @@ class DownloadFrame(ctk.CTkFrame):
         self._source_hint.grid(row=2, column=0, padx=14, pady=(0,12), sticky="w")
 
         # ── Info card ────────────────────────────────────────────────────────
-        info_card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=10)
-        info_card.grid(row=2, column=0, sticky="ew", padx=24, pady=6)
+        info_card = ctk.CTkFrame(self._body, fg_color=BG_CARD, corner_radius=8)
+        info_card.grid(row=1, column=0, sticky="ew", padx=24, pady=6)
         info_card.grid_columnconfigure(1, weight=1)
 
         self._thumb_box = ctk.CTkFrame(info_card, width=THUMBNAIL_SIZE[0], height=THUMBNAIL_SIZE[1],
@@ -615,8 +673,8 @@ class DownloadFrame(ctk.CTkFrame):
         self._info_meta.grid(row=1, column=1, sticky="w", padx=8, pady=(0,12))
 
         # ── Options card ─────────────────────────────────────────────────────
-        opts_card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=10)
-        opts_card.grid(row=3, column=0, sticky="ew", padx=24, pady=6)
+        opts_card = ctk.CTkFrame(self._body, fg_color=BG_CARD, corner_radius=8)
+        opts_card.grid(row=2, column=0, sticky="ew", padx=24, pady=6)
         opts_card.grid_columnconfigure(0, weight=1)
         opts_card.grid_columnconfigure(1, weight=1)
         self._opts_card = opts_card
@@ -696,8 +754,8 @@ class DownloadFrame(ctk.CTkFrame):
         self._set_feature_options({})
 
         # ── Progress card ────────────────────────────────────────────────────
-        prog_card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=10)
-        prog_card.grid(row=4, column=0, sticky="ew", padx=24, pady=6)
+        prog_card = ctk.CTkFrame(self._body, fg_color=BG_CARD, corner_radius=8)
+        prog_card.grid(row=3, column=0, sticky="ew", padx=24, pady=6)
         prog_card.grid_columnconfigure(0, weight=1)
 
         prog_inner = ctk.CTkFrame(prog_card, fg_color="transparent")
@@ -729,8 +787,8 @@ class DownloadFrame(ctk.CTkFrame):
         self._progress.set(0)
 
         # ── Action buttons ───────────────────────────────────────────────────
-        self._act_row = ctk.CTkFrame(self, fg_color="transparent")
-        self._act_row.grid(row=5, column=0, sticky="ew", padx=24, pady=(8,10))
+        self._act_row = ctk.CTkFrame(self._body, fg_color="transparent")
+        self._act_row.grid(row=4, column=0, sticky="ew", padx=24, pady=(8,10))
         self._act_row.grid_columnconfigure(0, weight=1)
 
         self._dl_btn = ctk.CTkButton(
@@ -758,8 +816,8 @@ class DownloadFrame(ctk.CTkFrame):
         self._folder_btn.grid(row=0, column=2)
 
         # ── Log console ──────────────────────────────────────────────────────
-        log_hdr = ctk.CTkFrame(self, fg_color="transparent")
-        log_hdr.grid(row=6, column=0, sticky="ew", padx=24, pady=(4,0))
+        log_hdr = ctk.CTkFrame(self._body, fg_color="transparent")
+        log_hdr.grid(row=5, column=0, sticky="ew", padx=24, pady=(4,0))
         log_hdr.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(log_hdr, text="CONSOLE OUTPUT",
                      font=ctk.CTkFont("Segoe UI", 9, weight="bold"),
@@ -771,55 +829,11 @@ class DownloadFrame(ctk.CTkFrame):
                       ).grid(row=0, column=1, sticky="e")
 
         self._log = ctk.CTkTextbox(
-            self, font=ctk.CTkFont("Consolas", 10),
+            self._body, font=ctk.CTkFont("Consolas", 10),
             fg_color=BG_PANEL, text_color=TXT_SEC,
             border_color=BORDER, border_width=1,
-            corner_radius=8, wrap="word", state="disabled")
-        self._log.grid(row=7, column=0, sticky="nsew", padx=24, pady=(4,16))
-
-    def _on_resize(self, event):
-        if event.widget is not self:
-            return
-        self._pending_width = max(event.width, 1)
-        if self._resize_job is not None:
-            self.after_cancel(self._resize_job)
-        self._resize_job = self.after(90, self._flush_resize)
-
-    def _flush_resize(self):
-        self._resize_job = None
-        width = self._pending_width or self.winfo_width()
-        compact = width < 860
-        if compact != self._compact_layout:
-            self._apply_layout(compact)
-            self._compact_layout = compact
-
-        content_width = max(280, width - 96)
-        self._info_title.configure(wraplength=max(260, content_width - THUMBNAIL_SIZE[0] - 72))
-        self._info_meta.configure(wraplength=max(260, content_width - THUMBNAIL_SIZE[0] - 72))
-        if self._source_hint is not None:
-            self._source_hint.configure(wraplength=max(280, content_width - 30))
-
-    def _apply_layout(self, compact):
-        self._right_opts.grid_forget()
-        self._dl_btn.grid_forget()
-        self._cancel_btn.grid_forget()
-        self._folder_btn.grid_forget()
-
-        if compact:
-            self._right_opts.grid(row=1, column=0, padx=14, pady=(0, 12), sticky="w")
-            self._act_row.grid_columnconfigure(0, weight=1)
-            self._act_row.grid_columnconfigure(1, weight=1)
-            self._dl_btn.grid(row=0, column=0, columnspan=2, sticky="ew", padx=0, pady=(0, 8))
-            self._cancel_btn.grid(row=1, column=0, sticky="ew", padx=(0, 4))
-            self._folder_btn.grid(row=1, column=1, sticky="ew", padx=(4, 0))
-        else:
-            self._right_opts.grid(row=0, column=1, padx=14, pady=12, sticky="e")
-            self._act_row.grid_columnconfigure(0, weight=1)
-            self._act_row.grid_columnconfigure(1, weight=0)
-            self._act_row.grid_columnconfigure(2, weight=0)
-            self._dl_btn.grid(row=0, column=0, sticky="ew", padx=(0,8))
-            self._cancel_btn.grid(row=0, column=1, padx=(0,8))
-            self._folder_btn.grid(row=0, column=2)
+            corner_radius=6, wrap="word", state="disabled", height=96)
+        self._log.grid(row=6, column=0, sticky="ew", padx=24, pady=(4,16))
 
     # ── Event Handlers ────────────────────────────────────────────────────────
     def _paste_url(self):
@@ -866,11 +880,6 @@ class DownloadFrame(ctk.CTkFrame):
             checkbox.configure(state="normal" if enabled else "disabled")
             if not enabled:
                 variable.set(False)
-
-        if features.get("playlist"):
-            self._playlist_var.set(True)
-        if features.get("thumbnail"):
-            self._thumb_var.set(True)
 
     @staticmethod
     def _analyze_features(info):
@@ -954,6 +963,8 @@ class DownloadFrame(ctk.CTkFrame):
         self._set_feature_options(features or {})
         if thumb_url:
             self._load_thumbnail(thumb_url, webpage_url)
+        else:
+            self._set_thumbnail_placeholder("No preview")
 
     @staticmethod
     def _extract_thumbnail_url(info):
@@ -967,11 +978,15 @@ class DownloadFrame(ctk.CTkFrame):
             for thumb in thumbs:
                 if thumb.get("url"):
                     return thumb["url"]
+        extractor = (info.get("extractor_key") or info.get("extractor") or "").lower()
+        video_id = info.get("id")
+        if video_id and "youtube" in extractor:
+            return f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
         return info.get("thumbnail") or ""
 
     def _reset_thumbnail(self):
         self._thumb_image = None
-        self._thumb_label.configure(image=None, text="▶", text_color=TXT_DIM)
+        self._set_thumbnail_placeholder("Preview")
 
     def _load_thumbnail(self, thumb_url, referer=""):
         if Image is None:
@@ -991,6 +1006,7 @@ class DownloadFrame(ctk.CTkFrame):
             self.after(0, lambda image=img: self._set_thumbnail(image))
         except Exception as e:
             self.after(0, lambda m=str(e): self._log_write(f"Thumbnail unavailable: {m}"))
+            self.after(0, lambda: self._set_thumbnail_placeholder("No preview"))
 
     def _download_thumbnail_bytes(self, thumb_url, referer):
         opts = apply_auth_opts({
@@ -1019,6 +1035,15 @@ class DownloadFrame(ctk.CTkFrame):
     def _set_thumbnail(self, image):
         self._thumb_image = ctk.CTkImage(light_image=image, dark_image=image, size=THUMBNAIL_SIZE)
         self._thumb_label.configure(image=self._thumb_image, text="")
+
+    def _set_thumbnail_placeholder(self, label):
+        self._thumb_image = None
+        self._thumb_label.configure(
+            image=None,
+            text=f"▶\n{label}",
+            text_color=TXT_DIM,
+            font=ctk.CTkFont("Segoe UI", 12, weight="bold"),
+        )
 
     def _show_error(self, raw_msg, fetch=False):
         clean = clean_error_text(raw_msg)
@@ -1470,10 +1495,8 @@ class SettingsFrame(ctk.CTkFrame):
         except ValueError:
             pass
         save_config(self.app.cfg)
-        ctk.set_appearance_mode(self.app.cfg["theme"])
-        self.app._dir_lbl.configure(
-            text=MediaFlowApp._short(self.app.cfg["output_dir"]))
-        messagebox.showinfo("Saved", "Settings saved!\nTheme changes fully apply on next launch.")
+        self.app.apply_runtime_settings()
+        messagebox.showinfo("Saved", "Settings applied to the running app.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

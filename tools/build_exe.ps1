@@ -8,6 +8,8 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 
+python .\tools\generate_icon.py
+
 if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
     Write-Error "PyInstaller is not installed. Run: python -m pip install pyinstaller"
 }

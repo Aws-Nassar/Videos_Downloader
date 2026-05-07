@@ -4,12 +4,18 @@ from pathlib import Path
 
 project_dir = Path(SPECPATH)
 icon_path = project_dir / "assets" / "mediaflow.ico"
+asset_datas = []
+if icon_path.exists():
+    asset_datas.append((str(icon_path), "assets"))
+png_icon_path = project_dir / "assets" / "mediaflow.png"
+if png_icon_path.exists():
+    asset_datas.append((str(png_icon_path), "assets"))
 
 a = Analysis(
     ["app.py"],
     pathex=[str(project_dir)],
     binaries=[],
-    datas=[],
+    datas=asset_datas,
     hiddenimports=["yt_dlp"],
     hookspath=[],
     hooksconfig={},
