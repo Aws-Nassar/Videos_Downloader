@@ -32,3 +32,6 @@ desktop.ini
 
 # Logs
 *.log
+
+# AI-generated project context (opencode)
+AGENTS.md

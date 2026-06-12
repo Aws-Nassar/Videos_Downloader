@@ -1,0 +1,110 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-exe:
+    name: Build Windows .exe
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Download FFmpeg
+        shell: pwsh
+        run: |
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          $zip = "$env:TEMP\ffmpeg.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          & 7z x $zip -o"$env:TEMP\ffmpeg" -y | Out-Null
+          Copy-Item "$env:TEMP\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe" tools\ffmpeg.exe
+          Copy-Item "$env:TEMP\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe" tools\ffprobe.exe
+          Copy-Item "$env:TEMP\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffplay.exe" tools\ffplay.exe
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Build with PyInstaller
+        run: pyinstaller MediaFlow.spec
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MediaFlow-Windows
+          path: dist/MediaFlow.exe
+
+  build-apk:
+    name: Build Android .apk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+
+      - name: Set up Android SDK & NDK
+        uses: android-actions/setup-android@v3
+        with:
+          accept-licenses: true
+
+      - name: Install NDK
+        run: sdkmanager "ndk;27.0.12077973" --sdk_root=$ANDROID_SDK_ROOT
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          allow-prereleases: true
+
+      - name: Resolve Python path for Chaquopy
+        id: python-path
+        run: |
+          PYTHON=$(which python)
+          echo "path=$PYTHON" >> $GITHUB_OUTPUT
+          echo "Found Python at: $PYTHON"
+          python --version
+
+      - name: Build debug APK
+        working-directory: Videos_Downloader_Mobile
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+        env:
+          CHAQUOPY_BUILD_PYTHON: ${{ steps.python-path.outputs.path }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MediaFlow-Android
+          path: Videos_Downloader_Mobile/app/build/outputs/apk/debug/app-debug.apk
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-exe, build-apk]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Display structure
+        run: ls -R
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            MediaFlow-Windows/MediaFlow.exe
+            MediaFlow-Android/app-debug.apk
+          generate_release_notes: true
