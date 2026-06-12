@@ -1,0 +1,40 @@
+plugins {
+    id "com.android.application"
+    id "com.chaquo.python"
+}
+
+android {
+    namespace "com.mediaflow.android"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.mediaflow.android"
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName "0.1.0"
+
+        ndk {
+            abiFilters "arm64-v8a", "x86_64"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version "3.14"
+        buildPython "C:/Users/coldw/AppData/Local/Python/bin/python.exe"
+        pip {
+            install "yt-dlp>=2024.12.0"
+        }
+    }
+}
+
+dependencies {
+    implementation "androidx.appcompat:appcompat:1.6.1"
+}

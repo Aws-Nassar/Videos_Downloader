@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+
+# Build outputs
+build/
+dist/
+*.spec~
+*.toc
+*.pkg
+*.pyz
+*.manifest
+*.exe
+
+# PyInstaller logs and temporary files
+warn-*.txt
+xref-*.html
+
+# FFmpeg binaries placed in tools\ for bundling — large binaries, not committed
+tools/ffmpeg.exe
+tools/ffprobe.exe
+tools/ffplay.exe
+
+# Local app state
+.ytflow2_config.json
+.ytflow2_history.json
+config.json
+history.json
+
+# Cookie files — may contain sensitive session data
+cookies.txt
+*.cookies.txt
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Cache and coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage/
+htmlcov/
