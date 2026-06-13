@@ -12,9 +12,9 @@ import re
 import subprocess
 import sys
 
-# Ensure the user's system PATH is fully inherited so ffmpeg is always found
-# even when the app is launched from a venv or via a desktop shortcut.
-if sys.platform == "win32":
+def _merge_system_path():
+    if sys.platform != "win32":
+        return
     import winreg
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
@@ -28,7 +28,7 @@ if sys.platform == "win32":
         full_path = os.pathsep.join(filter(None, [sys_path, user_path]))
         os.environ["PATH"] = full_path + os.pathsep + os.environ.get("PATH", "")
     except Exception:
-        pass  # Fall back silently; user can set FFmpeg path in Settings
+        pass
 import threading
 import time
 import urllib.request
@@ -53,15 +53,16 @@ from PyQt5.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QRadioButton,
     QScrollArea,
     QSizePolicy,
+    QSplashScreen,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
-    QProgressBar,
 )
 
 import importlib
@@ -215,6 +216,22 @@ PALETTES = {
         "warn": "#D97706",
         "selected": "#DDE9FF",
     },
+    "neon": {
+        "root": "#080C14",
+        "panel": "#0E1420",
+        "card": "#141C2C",
+        "input": "#0A101C",
+        "text": "#E0E8F0",
+        "muted": "#889AB0",
+        "dim": "#60708A",
+        "border": "#1A2438",
+        "accent": "#00D4FF",
+        "accent_hover": "#00B8E0",
+        "danger": "#FF3355",
+        "success": "#00FF88",
+        "warn": "#FFB800",
+        "selected": "#0A1C2E",
+    },
 }
 
 
@@ -358,14 +375,15 @@ def build_ydl_opts(
     playlist=False,
 ):
     os.makedirs(out_dir, exist_ok=True)
+    q_suffix = quality.replace(" ", "_").replace("(", "").replace(")", "").replace("/", "-")
     if playlist:
         outtmpl = os.path.join(
             out_dir,
             "%(playlist_title).80B",
-            "%(playlist_index)03d - %(title).100B [%(id)s].%(ext)s",
+            f"%(playlist_index)03d - %(title).100B [%(id)s] [{q_suffix}].%(ext)s",
         )
     else:
-        outtmpl = os.path.join(out_dir, "%(title).120B [%(id)s].%(ext)s")
+        outtmpl = os.path.join(out_dir, f"%(title).120B [%(id)s] [{q_suffix}].%(ext)s")
 
     postprocessors = []
     if is_audio:
@@ -435,13 +453,14 @@ def build_ydl_opts(
         "retries": 5,
         "fragment_retries": 5,
         "windowsfilenames": True,
-        "restrictfilenames": True,
         "trim_file_name": 160,
         # YouTube throttling fixes
         "http_chunk_size": 10485760,          # 10 MB chunks — bypasses per-request throttling
         "throttledratelimit": 102400,          # re-fetch URL if speed drops below 100 KB/s
         "extractor_args": {"youtube": {"player_client": ["web", "default"]}},
     }
+    opts["cachedir"] = False
+
     ffmpeg = cfg.get("ffmpeg_path", "").strip()
     if ffmpeg:
         opts["ffmpeg_location"] = ffmpeg
@@ -477,6 +496,12 @@ class ErrorDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
+
+        p = self.parent()
+        while p and not hasattr(p, '_palette'):
+            p = p.parent() if hasattr(p, 'parent') else None
+        if p and hasattr(p, '_palette'):
+            self.setStyleSheet(build_stylesheet(p._palette))
 
         title_label = QLabel(title)
         title_label.setObjectName("dialogTitle")
@@ -514,11 +539,13 @@ class WorkerSignals(QObject):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, qt_app=None):
+    def __init__(self, qt_app=None, splash=None, qt=None):
         super().__init__()
         self.cfg = load_config()
         self.history = load_history()
         self._nav_buttons = {}
+        self._splash = splash
+        self._qt = qt
 
         self._apply_app_icon(qt_app)
         self.setWindowTitle(f"{APP_NAME}  ·  v{VERSION}")
@@ -526,8 +553,18 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(760, 540)
 
         self._build_ui()
+        self._splash_msg("Applying theme…")
         self.apply_theme(self.cfg.get("theme", "dark"))
         self.navigate("Download")
+
+    def _splash_msg(self, text):
+        if self._splash and self._qt:
+            self._splash.showMessage(
+                "MediaFlow Pro  ·  " + text,
+                Qt.AlignBottom | Qt.AlignHCenter,
+                Qt.white,
+            )
+            self._qt.processEvents()
 
     def _apply_app_icon(self, qt_app=None):
         # Re-use the icon already set on QApplication when available,
@@ -625,8 +662,11 @@ class MainWindow(QMainWindow):
         version.setAlignment(Qt.AlignCenter)
         side.addWidget(version)
 
+        self._splash_msg("Building pages…")
+
         self.stack = QStackedWidget()
         self.stack.setObjectName("contentStack")
+        self._splash_msg("Building download page…")
         self.download_page = DownloadPage(self)
         self.history_page = HistoryPage(self)
         self.settings_page = SettingsPage(self)
@@ -802,10 +842,10 @@ class DownloadPage(QWidget):
 
         scroll = QScrollArea()
         scroll.setObjectName("platformScroll")
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidgetResizable(True)
-        scroll.setFixedHeight(72)
+        scroll.setFixedHeight(86)
         scroll.setFrameShape(QFrame.NoFrame)
 
         inner = QWidget()
@@ -990,6 +1030,7 @@ class DownloadPage(QWidget):
         self.download_btn = QPushButton("Start Download")
         self.download_btn.setObjectName("primaryButton")
         self.download_btn.setMinimumHeight(48)
+        self.download_btn.setEnabled(False)
         self.download_btn.clicked.connect(self.start_download)
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setObjectName("dangerButton")
@@ -997,6 +1038,11 @@ class DownloadPage(QWidget):
         self.cancel_btn.setMinimumWidth(100)
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.clicked.connect(self.cancel_download)
+        clear_btn = QPushButton("Clear")
+        clear_btn.setObjectName("secondaryButton")
+        clear_btn.setMinimumHeight(48)
+        clear_btn.setMinimumWidth(80)
+        clear_btn.clicked.connect(self.clear_analysis)
         open_btn = QPushButton("Open Folder")
         open_btn.setObjectName("secondaryButton")
         open_btn.setMinimumHeight(48)
@@ -1004,6 +1050,7 @@ class DownloadPage(QWidget):
         open_btn.clicked.connect(self.open_folder)
         row.addWidget(self.download_btn, 1)
         row.addWidget(self.cancel_btn)
+        row.addWidget(clear_btn)
         row.addWidget(open_btn)
         parent.addLayout(row)
 
@@ -1042,6 +1089,7 @@ class DownloadPage(QWidget):
             self.format_combo.addItems(AUDIO_FORMATS)
             self.quality_combo.clear()
             self.quality_combo.addItems(AUDIO_QUALITIES)
+        self.quality_combo.setCurrentIndex(0)
 
     def paste_url(self):
         self.url_edit.setText(QApplication.clipboard().text().strip())
@@ -1051,6 +1099,25 @@ class DownloadPage(QWidget):
 
     def log_edit_clear(self):
         self.log_edit.clear()
+
+    def clear_analysis(self):
+        self.url_edit.clear()
+        self.info_title.setText("Paste a link and click Analyse to load media info")
+        self.info_meta.setText("")
+        self._set_thumbnail_placeholder("Preview")
+        self.thumb_pixmap = None
+        self._set_feature_options({})
+        self.format_combo.clear()
+        self.format_combo.addItems(VIDEO_FORMATS)
+        self.quality_combo.clear()
+        self.quality_combo.addItems(VIDEO_QUALITIES)
+        self.quality_combo.setCurrentIndex(0)
+        self.video_radio.setChecked(True)
+        self.download_btn.setEnabled(False)
+        self.progress.setValue(0)
+        self.status_label.setText("Idle - ready to download")
+        self.speed_label.setText("")
+        self.eta_label.setText("")
 
     def _set_feature_options(self, features):
         self.media_features = features
@@ -1147,6 +1214,7 @@ class DownloadPage(QWidget):
         self._set_feature_options({})
         self.info_title.setText("Analysing media link...")
         self.info_meta.setText("")
+        self.download_btn.setEnabled(False)
         self.analyse_btn.setEnabled(False)
         self.analyse_btn.setText("Analysing...")
         self.log(f"Fetching info: {url}")
@@ -1196,6 +1264,7 @@ class DownloadPage(QWidget):
             self.quality_combo.blockSignals(True)
             self.quality_combo.clear()
             self.quality_combo.addItems(available_qualities)
+            self.quality_combo.setCurrentIndex(0)
             self.quality_combo.blockSignals(False)
 
         self.log(f'OK  "{title}"  |  {duration}  |  {formats} formats')
@@ -1207,11 +1276,13 @@ class DownloadPage(QWidget):
             self._set_thumbnail_placeholder("No preview")
         self.analyse_btn.setEnabled(True)
         self.analyse_btn.setText("Analyse")
+        self.download_btn.setEnabled(True)
 
     def _on_fetch_error(self, msg):
         self.log(f"ERROR  {clean_error_text(msg)}")
         self.analyse_btn.setEnabled(True)
         self.analyse_btn.setText("Analyse")
+        self.download_btn.setEnabled(False)
         ErrorDialog(self, msg, fetch=True).exec_()
 
     def _thumbnail_worker(self, thumb_url, referer):
@@ -1303,6 +1374,9 @@ class DownloadPage(QWidget):
 
     def _download_worker(self, url, out_dir, ext, quality, is_audio, options):
         start = time.time()
+        self.signals.progress.emit(
+            0, f"Downloading  [{quality}]  .{ext}", "", ""
+        )
 
         def hook(data):
             if self.cancel_event.is_set():
@@ -1557,12 +1631,13 @@ class SettingsPage(QWidget):
         form = QGridLayout(body)
         form.setContentsMargins(28, 22, 28, 24)
         form.setHorizontalSpacing(22)
-        form.setVerticalSpacing(14)
+        form.setVerticalSpacing(2)
         scroll.setWidget(body)
         root.addWidget(scroll, 1)
 
         row = 0
         row = self._section(form, row, "OUTPUT")
+
         self.dir_edit = QLineEdit()
         self.dir_edit.setMinimumHeight(38)
         browse = QPushButton("Browse")
@@ -1573,27 +1648,32 @@ class SettingsPage(QWidget):
         dir_row.addWidget(self.dir_edit, 1)
         dir_row.addWidget(browse)
         self._add_row(form, row, "Save Location", dir_row)
-        row += 1
+        self._add_setting_desc(form, row + 1, "Where downloaded files are saved to your computer", "immediate")
+        row += 2
 
         self.history_edit = QLineEdit()
         self.history_edit.setMinimumHeight(36)
         self.history_edit.setMaximumWidth(100)
         self._add_row(form, row, "Max History Entries", self.history_edit)
-        row += 1
+        self._add_setting_desc(form, row + 1, "Limits how many past downloads appear in the History tab", "immediate")
+        row += 2
 
         self.concurrent_combo = QComboBox()
         self.concurrent_combo.setMinimumHeight(36)
         self.concurrent_combo.addItems(["1", "2", "4", "8", "16"])
         self.concurrent_combo.setMaximumWidth(120)
         self._add_row(form, row, "Concurrent Fragments", self.concurrent_combo)
-        row += 1
+        self._add_setting_desc(form, row + 1, "Parallel connections for DASH downloads — higher is faster on capable connections", "next_download")
+        row += 2
 
         row = self._section(form, row, "ADVANCED")
+
         self.ffmpeg_edit = QLineEdit()
         self.ffmpeg_edit.setMinimumHeight(38)
         self.ffmpeg_edit.setPlaceholderText(r"e.g. C:\ffmpeg\bin")
         self._add_row(form, row, "FFmpeg Path (blank = auto-detect)", self.ffmpeg_edit)
-        row += 1
+        self._add_setting_desc(form, row + 1, "Required for merging formats and extracting audio — leave blank for auto-detect", "next_download")
+        row += 2
 
         self.cookie_edit = QLineEdit()
         self.cookie_edit.setMinimumHeight(38)
@@ -1606,23 +1686,27 @@ class SettingsPage(QWidget):
         cookie_row.addWidget(self.cookie_edit, 1)
         cookie_row.addWidget(cookie_browse)
         self._add_row(form, row, "Cookie File (optional)", cookie_row)
-        row += 1
+        self._add_setting_desc(form, row + 1, "Enables access to age-restricted or login-required content", "next_download")
+        row += 2
 
         self.browser_combo = QComboBox()
         self.browser_combo.setMinimumHeight(36)
         self.browser_combo.addItems(BROWSER_COOKIE_SOURCES)
         self.browser_combo.setMaximumWidth(160)
         self._add_row(form, row, "Use Browser Cookies", self.browser_combo)
-        row += 1
+        self._add_setting_desc(form, row + 1, "Extract cookies from an installed browser automatically", "next_download")
+        row += 2
 
         row = self._section(form, row, "APPEARANCE")
+
         self.theme_combo = QComboBox()
         self.theme_combo.setMinimumHeight(36)
-        self.theme_combo.addItems(["light", "dark", "system"])
+        self.theme_combo.addItems(["light", "dark", "neon", "system"])
         self.theme_combo.setMaximumWidth(160)
         self.theme_combo.currentTextChanged.connect(self.preview_theme)
         self._add_row(form, row, "Theme", self.theme_combo)
-        row += 1
+        self._add_setting_desc(form, row + 1, "Switch between Light, Dark, and Neon visual styles — live preview on selection", "immediate")
+        row += 2
 
         about = make_card()
         about_layout = QVBoxLayout(about)
@@ -1656,6 +1740,14 @@ class SettingsPage(QWidget):
             form.addLayout(widget_or_layout, row, 1)
         else:
             form.addWidget(widget_or_layout, row, 1)
+
+    @staticmethod
+    def _add_setting_desc(form, row, desc, effect):
+        badge = "🟢 Takes effect immediately" if effect == "immediate" else "🟢 Applies on next download"
+        label = QLabel(f"{desc}  ·  {badge}")
+        label.setObjectName("settingDesc")
+        label.setWordWrap(True)
+        form.addWidget(label, row, 0, 1, 2)
 
     def sync_from_config(self):
         cfg = self.app_window.cfg
@@ -1705,7 +1797,7 @@ class SettingsPage(QWidget):
 
 def build_stylesheet(p):
     return f"""
-    QMainWindow, QWidget#appRoot, QWidget#page, QStackedWidget#contentStack, QWidget#scrollBody {{
+    QMainWindow, QDialog, QWidget#appRoot, QWidget#page, QStackedWidget#contentStack, QWidget#scrollBody {{
         background: {p['root']};
         color: {p['text']};
         font-family: Segoe UI, Arial;
@@ -1725,6 +1817,28 @@ def build_stylesheet(p):
     QScrollArea > QWidget > QWidget {{
         background: {p['root']};
     }}
+    #platformScroll QScrollBar:horizontal {{
+        background: {p['input']};
+        border: none;
+        border-radius: 4px;
+        height: 8px;
+    }}
+    #platformScroll QScrollBar::handle:horizontal {{
+        background: {p['dim']};
+        border-radius: 4px;
+        min-width: 40px;
+    }}
+    #platformScroll QScrollBar::handle:horizontal:hover {{
+        background: {p['muted']};
+    }}
+    #platformScroll QScrollBar::add-line:horizontal,
+    #platformScroll QScrollBar::sub-line:horizontal {{
+        width: 0;
+    }}
+    #platformScroll QScrollBar::add-page:horizontal,
+    #platformScroll QScrollBar::sub-page:horizontal {{
+        background: none;
+    }}
     #card {{
         background: {p['card']};
         border: 1px solid {p['border']};
@@ -1740,7 +1854,7 @@ def build_stylesheet(p):
         font-size: 19px;
         font-weight: 700;
     }}
-    #infoTitle {{
+    #infoTitle, #dialogTitle {{
         color: {p['text']};
         font-size: 14px;
         font-weight: 700;
@@ -1751,6 +1865,12 @@ def build_stylesheet(p):
     #mutedSmall, QLabel#mutedSmall {{
         color: {p['dim']};
         font-size: 11px;
+    }}
+    #settingDesc {{
+        color: {p['dim']};
+        font-size: 11px;
+        padding-left: 2px;
+        margin-bottom: 4px;
     }}
     #eyebrow, #sectionLabel {{
         color: {p['dim']};
@@ -1788,6 +1908,16 @@ def build_stylesheet(p):
     }}
     QPushButton#primaryButton:hover {{
         background: {p['accent_hover']};
+    }}
+    QPushButton:disabled {{
+        background: {p['input']};
+        color: {p['dim']};
+        border: 1px solid {p['border']};
+    }}
+    QPushButton#primaryButton:disabled {{
+        background: {p['input']};
+        color: {p['dim']};
+        border: 1px solid {p['border']};
     }}
     QPushButton#dangerButton {{
         color: {p['danger']};
@@ -1874,8 +2004,8 @@ def build_stylesheet(p):
 
 
 def main():
-    # Set AppUserModelID BEFORE creating QApplication so Windows
-    # correctly groups the window and shows the icon in the taskbar.
+    _merge_system_path()
+
     if sys.platform == "win32":
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
@@ -1886,7 +2016,20 @@ def main():
 
     qt_app = QApplication(sys.argv)
 
-    # Apply icon to the QApplication so it propagates to the taskbar.
+    splash_pix = QPixmap(400, 220)
+    splash_pix.fill(Qt.black)
+    splash = QSplashScreen(splash_pix)
+    splash.setWindowFlags(splash.windowFlags() | Qt.WindowStaysOnTopHint)
+    splash.show()
+    qt_app.processEvents()
+
+    splash.showMessage(
+        "MediaFlow Pro  ·  Loading...",
+        Qt.AlignBottom | Qt.AlignHCenter,
+        Qt.white,
+    )
+    qt_app.processEvents()
+
     icon_path = resource_path("assets", ICON_FILE)
     if icon_path.exists():
         app_icon = QIcon(str(icon_path))
@@ -1895,7 +2038,8 @@ def main():
         app_icon = QIcon(str(png_path)) if png_path.exists() else QIcon()
     qt_app.setWindowIcon(app_icon)
 
-    window = MainWindow(qt_app)
+    window = MainWindow(qt_app, splash, qt_app)
+    splash.finish(window)
     window.show()
     sys.exit(qt_app.exec_())
 
