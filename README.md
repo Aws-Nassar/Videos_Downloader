@@ -112,7 +112,7 @@ Output: `dist\MediaFlow.exe`
 Install system dependencies and build:
 
 ```bash
-sudo apt update && sudo apt install -y ffmpeg upx libegl1
+sudo apt update && sudo apt install -y ffmpeg upx
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 python -m PyInstaller MediaFlow.spec
@@ -175,4 +175,4 @@ Both files are shared across **all versions** of MediaFlow on the same machine (
 | Download fails with no clear error | Confirm the URL opens in your browser and try a different quality or format |
 | "Unknown publisher" / Windows SmartScreen warning | This is normal for unsigned PyInstaller executables. Click "More info" → "Run anyway". The app is open-source; inspect the code or build from source if concerned |
 | App takes a long time to start | First launch is slower because yt-dlp registers all site extractors. Subsequent launches are faster. The yt-dlp import is deferred to when you first click "Analyse" |
-| Linux binary says "cannot open shared object file" | Install missing Qt system deps: `sudo apt install libegl1 libxcb-xinerama0` |
+| Linux binary says "cannot open shared object file" | Install missing Qt system deps: `sudo apt install libegl1` |
