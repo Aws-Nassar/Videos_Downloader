@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import shutil
+import sys
 from pathlib import Path
 
 project_dir = Path(SPECPATH)
@@ -19,7 +20,8 @@ if png_icon_path.exists():
 #   2. Anywhere on the system PATH
 # ---------------------------------------------------------------------------
 binaries = []
-ffmpeg_names = ["ffmpeg.exe", "ffprobe.exe", "ffplay.exe"]
+ffmpeg_suffix = ".exe" if sys.platform == "win32" else ""
+ffmpeg_names = [f"ffmpeg{ffmpeg_suffix}", f"ffprobe{ffmpeg_suffix}", f"ffplay{ffmpeg_suffix}"]
 tools_dir = project_dir / "tools"
 for name in ffmpeg_names:
     candidate = tools_dir / name
@@ -39,7 +41,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     # Prepends _MEIPASS to PATH so bundled ffmpeg.exe is found automatically
-    runtime_hooks=["hooks\\hook_ffmpeg_path.py"],
+    runtime_hooks=["hooks/hook_ffmpeg_path.py"],
     excludes=[],
     noarchive=False,
     optimize=0,
