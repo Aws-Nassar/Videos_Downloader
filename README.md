@@ -16,6 +16,7 @@
 | **History** | Download history with search and re-download shortcuts |
 | **Cookies** | Support for cookies.txt or browser-cookie extraction |
 | **Portable** | FFmpeg bundled inside the Windows executable — no separate install for end users |
+| **Platforms** | Windows (.exe), Linux (ELF), Android (.apk) — built automatically via CI on every release tag |
 
 ## Project Structure
 
@@ -43,12 +44,18 @@
 
 - **Python 3.10+**
 - **FFmpeg** — required for merging separate video/audio streams, converting formats, and extracting audio
-  - **Running from source**: Install FFmpeg and add its `bin` folder to your system PATH, or set the path in the app's **Settings → FFmpeg Path**
-  - **Running the built `.exe`**: FFmpeg is bundled automatically at build time
-  - Download FFmpeg from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases) (`ffmpeg-master-latest-win64-gpl.zip`)
+  - **Windows (source run)**: Install FFmpeg and add its `bin` folder to your system PATH, or set the path in **Settings → FFmpeg Path**
+  - **Windows (built `.exe`)**: FFmpeg is bundled automatically at build time via `tools/*.exe`
+  - **Linux (source run)**: `sudo apt install ffmpeg` (system PATH is used automatically)
+  - **Linux (built binary)**: FFmpeg is bundled automatically if found on PATH during build
+  - Download for Windows: [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases) (`ffmpeg-master-latest-win64-gpl.zip`)
 - Internet access
 
+---
+
 ## Run From Source
+
+### Windows
 
 ```powershell
 python -m venv .venv
@@ -57,9 +64,24 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-If FFmpeg is not on your PATH, open **Settings** and set the **FFmpeg Path** field to the folder containing `ffmpeg.exe`.
+### Linux
 
-## Build the Executable
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
+
+If FFmpeg is not on your PATH, open **Settings** and set the **FFmpeg Path** field to the folder containing `ffmpeg`.
+
+---
+
+## Build an Executable
+
+The `MediaFlow.spec` is cross-platform: it resolves the FFmpeg binary suffix (`.exe` on Windows, none on Linux) and runtime hook path automatically.
+
+### Windows
 
 Place the three FFmpeg binaries in `tools\`:
 
@@ -84,6 +106,33 @@ Or use the helper script:
 ```
 
 Output: `dist\MediaFlow.exe`
+
+### Linux
+
+Install system dependencies and build:
+
+```bash
+sudo apt update && sudo apt install -y ffmpeg upx libegl1
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+python -m PyInstaller MediaFlow.spec
+```
+
+Output: `dist/MediaFlow` (ELF binary, no extension)
+
+---
+
+## Releases
+
+When a tag matching `v*` is pushed to GitHub, the CI workflow (`.github/workflows/release.yml`) builds and publishes three artifacts:
+
+| Artifact | Platform | Runner |
+|----------|----------|--------|
+| `MediaFlow-Windows/MediaFlow.exe` | Windows 10+ | `windows-latest` |
+| `MediaFlow-Linux/MediaFlow` | Linux (x86-64) | `ubuntu-latest` |
+| `MediaFlow-Android/app-debug.apk` | Android (7+) | `ubuntu-latest` (Chaquopy + Gradle) |
+
+All three are attached to the GitHub Release automatically.
 
 ## Downloading From Other Sources
 
@@ -118,10 +167,12 @@ Both files are shared across **all versions** of MediaFlow on the same machine (
 | Symptom | Fix |
 |---|---|
 | "FFmpeg is missing or unavailable" (source run) | Install FFmpeg and set its path in Settings, or add it to PATH |
-| "FFmpeg is missing or unavailable" (exe run) | Rebuild the exe after placing `ffmpeg.exe` in `tools\` |
+| "FFmpeg is missing or unavailable" (Windows exe) | Rebuild the exe after placing `ffmpeg.exe` in `tools\` |
+| "FFmpeg is missing or unavailable" (Linux binary) | Install ffmpeg via your package manager and rebuild: `sudo apt install ffmpeg` |
 | PyInstaller not found during build | Activate venv first, then `pip install -r requirements-dev.txt` |
 | A site stops working | Update yt-dlp: `python -m pip install -U yt-dlp` |
 | Private or login-required content fails | Enable browser cookies or supply a `cookies.txt` in Settings |
 | Download fails with no clear error | Confirm the URL opens in your browser and try a different quality or format |
 | "Unknown publisher" / Windows SmartScreen warning | This is normal for unsigned PyInstaller executables. Click "More info" → "Run anyway". The app is open-source; inspect the code or build from source if concerned |
 | App takes a long time to start | First launch is slower because yt-dlp registers all site extractors. Subsequent launches are faster. The yt-dlp import is deferred to when you first click "Analyse" |
+| Linux binary says "cannot open shared object file" | Install missing Qt system deps: `sudo apt install libegl1 libxcb-xinerama0` |
